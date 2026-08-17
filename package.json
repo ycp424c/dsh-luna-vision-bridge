@@ -3,6 +3,7 @@
   "description": "DSH LLM adapter that transcribes native image attachments with Codex Luna before delegating to DeepSeek",
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": {
