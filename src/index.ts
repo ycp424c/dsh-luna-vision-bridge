@@ -6,7 +6,7 @@
  * any configuration file.
  */
 import type { Context } from 'cordis'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type { SettingsNamespace, SettingsSectionHooks } from '@deepseek-ai/dsh-settings'
 import { LunaVisionBridgeAdapter } from './adapter.js'
 import { Config, resolveConfig } from './config.js'
 import type { Config as ConfigShape, ResolvedConfig } from './config.js'
@@ -22,7 +22,7 @@ export type { LunaVisionDeps, VisionCommand } from './vision.js'
 export const name = '@ycp424c/dsh-luna-vision-bridge'
 
 /** User-settings namespace surfacing this plugin's configuration in the Web UI. */
-export const NS = settingsNamespace('luna-vision-bridge')
+export const NS = 'luna-vision-bridge' as SettingsNamespace
 
 /** Services needed to resolve target models and read durable images. */
 export const inject = ['llm', 'attachments']
@@ -118,16 +118,32 @@ export function apply(ctx: Context, config: ConfigShape = {}): void {
     published = candidate
   }
 
-  installSettingsSection(ctx, NS, Config, config, {
-    setSource: (source) => {
-      current = source
-    },
-    validate: (value) => {
-      // Reject a section the adapter could not act on: duplicate bridgeModel
-      // ids or a target provider colliding with the bridge provider itself.
-      resolveConfig(value)
-    },
-    onChange: ensureRegistrationFacts,
+  ctx.inject(['settings'], (settingsCtx) => {
+    // installSection moved onto the provider in dsh-settings 0.1.2-rc.x
+    // (previously a standalone helper taking ctx first). The profile always
+    // resolves dsh-settings through the installed dsh, so call the provider
+    // method directly.
+    type SettingsBridge = Context['settings'] & {
+      installSection: (
+        owner: Context,
+        ns: SettingsNamespace,
+        schema: typeof Config,
+        entry: ConfigShape,
+        sectionHooks: SettingsSectionHooks<ConfigShape>,
+      ) => void
+    }
+    const provider = settingsCtx.settings as unknown as SettingsBridge
+    provider.installSection(ctx, NS, Config, config, {
+      setSource: (source) => {
+        current = source
+      },
+      validate: (value) => {
+        // Reject a section the adapter could not act on: duplicate bridgeModel
+        // ids or a target provider colliding with the bridge provider itself.
+        resolveConfig(value)
+      },
+      onChange: ensureRegistrationFacts,
+    })
   })
 }
 

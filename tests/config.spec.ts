@@ -154,17 +154,32 @@ describe('settings integration', () => {
     const logger = { error: vi.fn() }
     const settings: { get: () => Config; validate?: (value: Config) => void } = { get: () => entry }
     let settingsCallback: ((sctx: unknown) => void) | undefined
+    // installSection owns the scope internally; the plugin only sees the
+    // hooks, so the mock keeps the hook sink and lets commit()/detach()
+    // drive onChange exactly like the real watcher/teardown would.
+    let hooks: {
+      setSource: (current: () => Config) => void
+      onChange: () => void
+      validate?: (value: Config) => void
+    } | undefined
     let disposer: (() => void) | undefined
-    let watcher: (() => void) | undefined
-    const registerSettings = vi.fn((_ns: unknown, _schema: unknown, opts: { base?: Config; validate?: (value: Config) => void }) => {
-      if (opts.validate !== undefined) settings.validate = opts.validate
-      return {
-        get: () => settings.get(),
-        watch: (callback: () => void) => {
-          watcher = callback
-          return () => {}
-        },
+    let current: () => Config = () => entry
+    const registerSettings = vi.fn((_owner: unknown, _ns: unknown, _schema: unknown, sectionEntry: unknown, sectionHooks: {
+      setSource: (source: () => Config) => void
+      onChange: () => void
+      validate?: (value: Config) => void
+    }) => {
+      hooks = sectionHooks
+      if (sectionHooks.validate !== undefined) settings.validate = sectionHooks.validate
+      hooks.setSource(() => current())
+      // Mirror the real installSection teardown (owned by the provider, not
+      // the plugin): detach falls back to the composition entry.
+      const sectionEntrySnapshot = sectionEntry as Config
+      disposer = () => {
+        current = () => sectionEntrySnapshot
+        hooks?.onChange()
       }
+      hooks.onChange()
     })
     const ctx = {
       llm: {
@@ -192,11 +207,14 @@ describe('settings integration', () => {
 
     const attach = (): void => {
       settingsCallback?.({
-        settings: { register: registerSettings },
-        effect: (fn: () => () => void) => { disposer = fn() },
+        settings: { installSection: registerSettings },
+        effect: (fn: () => () => void) => fn(),
       } as unknown)
     }
-    const commit = (): void => { watcher?.() }
+    const commit = (): void => {
+      current = () => settings.get()
+      hooks?.onChange()
+    }
     const detach = (): void => { disposer?.() }
 
     expect(registerAdapter).toHaveBeenCalledOnce()
@@ -222,13 +240,11 @@ describe('settings integration', () => {
     h.attach()
 
     expect(h.registerSettings).toHaveBeenCalledOnce()
-    expect(h.registerSettings.mock.calls[0]?.[0]).toBe(NS)
-    expect(h.registerSettings.mock.calls[0]?.[2]).toMatchObject({
-      base: { cacheDescriptions: false },
-      validate: expect.any(Function),
-    })
+    expect(h.registerSettings.mock.calls[0]?.[1]).toBe(NS)
+    expect(h.registerSettings.mock.calls[0]?.[3]).toMatchObject({ cacheDescriptions: false })
+    expect(h.registerSettings.mock.calls[0]?.[4]).toMatchObject({ validate: expect.any(Function) })
     // The cross-field validation rejects duplicate bridge models.
-    const { validate } = h.registerSettings.mock.calls[0]?.[2] as { validate: (value: Config) => void }
+    const { validate } = h.registerSettings.mock.calls[0]?.[4] as { validate: (value: Config) => void }
     expect(() => validate({
       targets: [
         { provider: 'a', model: 'm', bridgeModel: 'dup' },
