@@ -1,7 +1,7 @@
 {
   "name": "@ycp424c/dsh-luna-vision-bridge",
   "description": "DSH LLM adapter that transcribes native image attachments with Codex Luna before delegating to DeepSeek",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "main": "lib/index.js",
@@ -28,8 +28,8 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-connection"
       ],
@@ -37,35 +37,37 @@
     }
   },
   "scripts": {
-    "setup:dsh": "node scripts/link-dsh-source.mjs",
+    "setup:dsh": "node scripts/setup-dsh.mjs",
     "build": "tsc -p tsconfig.build.json && node scripts/build-client.mjs",
     "build:host": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm build && pnpm test"
   },
-  "dependencies": {
-    "schemastery": "^3.18.0"
-  },
+  "dependencies": {},
   "peerDependencies": {
-    "@deepseek-ai/dsh-attachment": "^0.0.1",
-    "@deepseek-ai/dsh-llm": "^0.0.1",
-    "@deepseek-ai/dsh-settings": "^0.0.1",
-    "cordis": "^4.0.0-rc.7"
+    "@deepseek-ai/dsh-attachment": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.1-rc.2",
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/schemastery": "~3.18.4"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-attachment": "link:.dsh/source/current/packages/attachment/attachment",
-    "@deepseek-ai/dsh-client-connection": "link:.dsh/source/current/packages/client/connection",
-    "@deepseek-ai/dsh-client-runtime": "link:.dsh/source/current/packages/client/runtime",
-    "@deepseek-ai/dsh-client-ui-settings": "link:.dsh/source/current/packages/client/ui-settings",
-    "@deepseek-ai/dsh-client-ui-slots": "link:.dsh/source/current/packages/client/ui-slots",
-    "@deepseek-ai/dsh-host-apiproxy": "link:.dsh/source/current/packages/host/apiproxy",
-    "@deepseek-ai/dsh-llm": "link:.dsh/source/current/packages/llm/llm",
-    "@deepseek-ai/dsh-settings": "link:.dsh/source/current/packages/settings/settings",
+    "@deepseek-ai/cordis": "link:.dsh/sdk/@deepseek-ai/cordis",
+    "@deepseek-ai/cordis-plugin-loader": "link:.dsh/sdk/@deepseek-ai/cordis-plugin-loader",
+    "@deepseek-ai/cosmokit": "link:.dsh/sdk/@deepseek-ai/cosmokit",
+    "@deepseek-ai/dsh-api-remotes": "link:.dsh/sdk/@deepseek-ai/dsh-api-remotes",
+    "@deepseek-ai/dsh-attachment": "link:.dsh/sdk/@deepseek-ai/dsh-attachment",
+    "@deepseek-ai/dsh-client-ui-renderer": "link:.dsh/sdk/@deepseek-ai/dsh-client-ui-renderer",
+    "@deepseek-ai/dsh-client-ui-settings": "link:.dsh/sdk/@deepseek-ai/dsh-client-ui-settings",
+    "@deepseek-ai/dsh-client-ui-slots": "link:.dsh/sdk/@deepseek-ai/dsh-client-ui-slots",
+    "@deepseek-ai/dsh-llm": "link:.dsh/sdk/@deepseek-ai/dsh-llm",
+    "@deepseek-ai/dsh-settings": "link:.dsh/sdk/@deepseek-ai/dsh-settings",
+    "@deepseek-ai/dsh-util-values": "link:.dsh/sdk/@deepseek-ai/dsh-util-values",
+    "@deepseek-ai/schemastery": "link:.dsh/sdk/@deepseek-ai/schemastery",
     "@types/node": "^22.0.0",
     "@types/react": "~18.3.1",
     "@types/react-test-renderer": "^18.3.1",
-    "cordis": "link:.dsh/source/current/vendor/cordis",
     "react": "^18.2.0",
     "react-test-renderer": "^18.2.0",
     "tsdown": "^0.22.2",

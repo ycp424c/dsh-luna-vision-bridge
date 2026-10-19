@@ -7,15 +7,21 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "lib": ["ES2024", "DOM", "DOM.Iterable"],
-    "types": ["node"],
+    "lib": [
+      "ES2024",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node"
+    ],
     "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": false,
-    "noImplicitOverride": false
+    "noImplicitOverride": false,
+    "rootDir": "."
   },
   "include": [
     "src/client/**/*.ts",
-    "src/client/**/*.tsx",
-    "tests/client-section.spec.tsx"
+    "src/client/**/*.tsx"
   ]
 }

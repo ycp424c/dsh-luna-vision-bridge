@@ -14,7 +14,7 @@ export interface TargetDraft {
 }
 
 /** Patch form of a target row: blank optional fields are omitted entirely. */
-export interface TargetPatch {
+export type TargetPatch = {
   provider: string
   model: string
   name?: string

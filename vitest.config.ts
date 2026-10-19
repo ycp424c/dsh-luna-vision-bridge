@@ -1,12 +1,11 @@
 import { defineConfig } from 'vitest/config'
+import { testAliases } from './scripts/dsh-sdk.mjs'
 
 export default defineConfig({
+  resolve: { alias: testAliases() },
   test: {
-    include: ['tests/**/*.spec.{ts,tsx}'],
-    environment: 'node',
-    coverage: {
-      provider: 'v8',
-      include: ['src/**/*.ts'],
-    },
+    environment: 'node', include: ['tests/**/*.spec.ts', 'tests/**/*.spec.tsx'],
+    server: { deps: { inline: [/dsh-client-store/, /zustand/, /immer/] } },
+    restoreMocks: true, clearMocks: true,
   },
 })

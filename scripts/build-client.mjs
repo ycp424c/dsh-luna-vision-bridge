@@ -16,7 +16,7 @@ await build({
   dts: false,
   sourcemap: true,
   clean: false,
-  outDir: 'lib',
+  outDir: process.env.DSH_OUT_DIR ?? 'lib',
   deps: {
     neverBundle: [
       'react',

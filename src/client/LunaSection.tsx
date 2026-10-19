@@ -8,8 +8,7 @@
  */
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { ModelProviderGroup, SettingsNamespaceView } from '@deepseek-ai/dsh-host-apiproxy/api'
-import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
+import type { LunaSettingsApi, ModelProviderGroup, SettingsNamespaceView } from './api.ts'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -21,7 +20,7 @@ import type { LunaDraft, TargetDraft } from './draft.ts'
 /** Registration-side business face for the section. */
 export interface LunaSectionInjected {
   /** Wire face for reading/writing the namespace and the model catalog. */
-  api: Pick<IApiClient, 'settings' | 'llm'>
+  api: LunaSettingsApi
 }
 
 /** Full component props: the settings-shell owner share plus this face. */
@@ -177,7 +176,7 @@ export function LunaSection(props: LunaSectionProps): ReactNode {
         expectedRevision: namespace.revision,
       })
       if (!response.result.ok) {
-        if (response.result.error.code === 'settings-conflict') {
+        if (response.result.error.code === 'settings-conflict' || response.result.error.code === 'settings/conflict') {
           // Refresh the revision so a retry can land, while keeping the local
           // draft so the user's edits are not silently discarded.
           const refreshed = await describe(false)
@@ -212,7 +211,7 @@ export function LunaSection(props: LunaSectionProps): ReactNode {
         expectedRevision: namespace.revision,
       })
       if (!response.result.ok) {
-        if (response.result.error.code === 'settings-conflict') {
+        if (response.result.error.code === 'settings-conflict' || response.result.error.code === 'settings/conflict') {
           const refreshed = await describe(false)
           setError(refreshed
             ? '设置已被其他窗口修改，已刷新最新值，请重试'
@@ -255,7 +254,7 @@ export function LunaSection(props: LunaSectionProps): ReactNode {
         {draft.targets.map((row, index) => (
           <div key={index}>
             <div style={styles.row}>
-              {catalog.length === 0
+              {downstreamCatalog.length === 0
                 ? (
                   <input
                     style={styles.select}

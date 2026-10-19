@@ -5,8 +5,9 @@
  * downstream targets are editable from the Web Settings UI without touching
  * any configuration file.
  */
-import type { Context } from 'cordis'
-import type { SettingsNamespace, SettingsSectionHooks } from '@deepseek-ai/dsh-settings'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
+import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { LunaVisionBridgeAdapter } from './adapter.js'
 import { Config, resolveConfig } from './config.js'
 import type { Config as ConfigShape, ResolvedConfig } from './config.js'
@@ -27,6 +28,13 @@ export const NS = 'luna-vision-bridge' as SettingsNamespace
 /** Services needed to resolve target models and read durable images. */
 export const inject = ['llm', 'attachments']
 
+/** Legacy settings hooks; 0.2.1 projects the exported Config through its Loader. */
+interface SettingsSectionHooks<T> {
+  setSource: (source: () => T) => void
+  validate: (value: T) => void
+  onChange: () => void
+}
+
 /**
  * Register the bridge provider and its settings section. Provider and model
  * selection then appear in the stock DSH model selector without any client
@@ -34,12 +42,13 @@ export const inject = ['llm', 'attachments']
  * @param ctx - DSH host context carrying LLM and attachment services.
  * @param config - raw loader configuration.
  */
-export function apply(ctx: Context, config: ConfigShape = {}): void {
-  let current: () => ConfigShape = () => config
+export function apply(ctx: Context, config: ConfigShape | Volatile<ConfigShape> = {}): void {
+  const configRef = 'get' in config ? config as Volatile<ConfigShape> : undefined
+  let current: () => ConfigShape = () => configRef === undefined ? config as ConfigShape : structuredClone(configRef.get()) as ConfigShape
   // The configuration the adapter serves: a candidate becomes the published
   // value only after every registry refresh succeeds, so a failed route swap
   // keeps serving the last good configuration.
-  let published = resolveConfig(config)
+  let published = resolveConfig(current())
   // During a synchronous registry refresh the adapter reads this staged
   // candidate, so `replace` captures the candidate's retry policy and
   // provider metadata instead of the previous generation's.
@@ -118,13 +127,22 @@ export function apply(ctx: Context, config: ConfigShape = {}): void {
     published = candidate
   }
 
+  if (configRef !== undefined) {
+    ctx.on('internal/config', function (_raw, next) {
+      const raw = next()
+      if (this === ctx.fiber) resolveConfig(structuredClone(Config(raw).get()) as ConfigShape)
+      return raw
+    })
+    ctx.on('loader/volatile-update', ensureRegistrationFacts)
+  }
+
   ctx.inject(['settings'], (settingsCtx) => {
     // installSection moved onto the provider in dsh-settings 0.1.2-rc.x
     // (previously a standalone helper taking ctx first). The profile always
     // resolves dsh-settings through the installed dsh, so call the provider
     // method directly.
     type SettingsBridge = Context['settings'] & {
-      installSection: (
+      installSection?: (
         owner: Context,
         ns: SettingsNamespace,
         schema: typeof Config,
@@ -133,7 +151,10 @@ export function apply(ctx: Context, config: ConfigShape = {}): void {
       ) => void
     }
     const provider = settingsCtx.settings as unknown as SettingsBridge
-    provider.installSection(ctx, NS, Config, config, {
+    // New settings forms own the live Config reference; the volatile-update
+    // listener above refreshes routes and provider directory without remounting.
+    if (typeof provider.installSection !== 'function') return
+    provider.installSection(ctx, NS, Config, current(), {
       setSource: (source) => {
         current = source
       },
@@ -147,4 +168,5 @@ export function apply(ctx: Context, config: ConfigShape = {}): void {
   })
 }
 
-export default apply
+// Loader unwraps the default export; keep Config and service dependencies with apply.
+export default { name, inject, Config, apply }

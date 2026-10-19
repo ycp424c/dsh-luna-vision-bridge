@@ -6,15 +6,16 @@
  * The Host owns validation and live application; this face only edits the
  * user layer.
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the settings shell's SlotMap merge (the 'settings.section' entry).
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { LunaSection } from './LunaSection.tsx'
 import type { LunaSectionInjected } from './LunaSection.tsx'
+import { createLunaApi } from './api.ts'
 
 /** Required services (cordis fiber inject). The target slot is declared by ui-settings' apply. */
-export const inject = ['slots', 'connection']
+export const inject = ['slots', 'connection', 'remote.settings', 'remote.session']
 
 /**
  * Register the section once the `settings.section` declaration is on the
@@ -23,8 +24,8 @@ export const inject = ['slots', 'connection']
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
-  const connection = ctx.get('connection') as ConnectionHandle
-  const injected = (): LunaSectionInjected => ({ api: connection.api })
+  const api = createLunaApi(ctx)
+  const injected = (): LunaSectionInjected => ({ api })
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',

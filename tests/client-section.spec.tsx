@@ -205,6 +205,16 @@ describe('LunaSection', () => {
     expect((model?.props as { value: string }).value).toBe('')
   })
 
+  it('allows a manual downstream when the catalog only contains the bridge itself', async () => {
+    const benchApi = bench({ models: vi.fn().mockResolvedValue(ok({ groups: [
+      { id: 'luna-vision-bridge', name: 'Luna', models: [] },
+    ] })) })
+    const root = await render(benchApi.api)
+    const provider = root.root.findAll(node => node.props['aria-label'] === '第 1 行 provider')[0]
+    expect(provider?.type).toBe('input')
+    expect(provider?.props.value).toBe('deepseek-official')
+  })
+
   it('shows a describe business failure and disables every write control', async () => {
     const benchApi = bench({ describe: vi.fn().mockResolvedValue(rejected('settings exploded')) })
     const root = await render(benchApi.api)

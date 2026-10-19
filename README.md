@@ -1,9 +1,23 @@
 # dsh-luna-vision-bridge
 
-`dsh-luna-vision-bridge` 是一个纯 Host 侧的 DSH LLM adapter。它注册新的 `luna-vision-bridge` provider，让原生 DSH 输入框可以继续使用粘贴图片、拖放、缩略图、删除、Enter 和发送按钮；图片进入 DSH 原生 attachment store 后，由 Codex Luna 转成文字，再交给任意一个已注册的纯文本模型（下游 target，可配置多个并在模型选择器切换）。
+## DSH 0.2.1-rc.2 开发与验证
 
-> [!WARNING]
-> 这是为当前 DSH 图片输入限制准备的临时兼容方案，不是建议长期依赖的正式架构。通过客制化 provider 宣告图片能力、再在 adapter 内转写图片，本质上是绕过当前 text-only admission 的工程性 workaround，具有一定 hack 性质。转写端只适配 Codex CLI 和 `gpt-5.6-luna`；下游可以是任意纯文本 provider，但本插件不是通用视觉 provider 框架。DSH 官方后续可能很快提供原生读图能力，但具体能力和时间以官方发布为准；一旦官方方案覆盖当前需求，应优先迁移并停用本插件。
+本次 0.1.1 适配要求 DSH `0.2.1-rc.2`；尚未发布 npm。运行包与开发工作区分开。
+开发验证直接使用同版已安装的官方 npm SDK，客户端引擎测试另需官方源码 tag
+`dsh-v0.2.1-rc.2`（commit `687f282e8625c6b8d11ff58211a90524be2e4317`）。
+setup 校验版本、生成忽略的本机路径映射，不修改上游源码。Node 与 pnpm 版本见 package.json。
+
+```bash
+# runtime-prefix 下须有 node_modules/@deepseek-ai/dsh@0.2.1-rc.2。
+# 另外需要同版 client-store、client-ui-slots、client-ui-primitives，
+# 以及 client-store 使用的 zustand@5 / immer@10；若另装到一个 prefix，作为第三个参数传入。
+node scripts/setup-dsh.mjs /path/to/runtime-prefix /path/to/deepseek-harness-at-tag /path/to/extra-sdk-prefix
+pnpm install --frozen-lockfile
+pnpm check
+```
+
+不需要第三个 SDK prefix 时可省略。SDK 使用外部已有安装，仓库不复制核心实现；
+三个输入目录可以放在任意持久位置，提交的默认配置不依赖临时目录或个人绝对路径。
 
 ## 工作方式
 
@@ -42,24 +56,14 @@ target provider / target model（任意纯文本下游，按所选模型路由�
 
 ## 本地开发
 
-```bash
-cd /absolute/path/to/dsh-luna-vision-bridge
-pnpm setup:dsh
-pnpm install
-pnpm check
-```
-
-`setup:dsh` 默认链接 `~/.dsh/source/current`；也可以通过参数或 `DSH_SOURCE` 环境变量传入其他 DSH checkout：
-
-```bash
-pnpm setup:dsh -- /absolute/path/to/dsh
-```
+按文首 `DSH 0.2.1-rc.2 开发与验证` 配置 SDK，再执行 `pnpm install --frozen-lockfile` 与 `pnpm check`。
+默认构建、类型检查与测试均使用生成的同版 SDK 映射，无需旧 staging checkout。
 
 ## 安装到 Web profile
 
 ### 通过 npm（推荐）
 
-插件已发布到 npm：`@ycp424c/dsh-luna-vision-bridge`。
+npm 已发布的 `@ycp424c/dsh-luna-vision-bridge@0.1.0` 属于旧版 DSH。以下 npm 命令仅供旧版使用；DSH `0.2.1-rc.2` 请按文首构建本仓库 0.1.1，尚未发布新版 npm。
 
 ```bash
 # 1. 安装依赖（等价于在 profile 目录执行 pnpm add）

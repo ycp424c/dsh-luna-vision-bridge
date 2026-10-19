@@ -4,17 +4,16 @@ import {
   LlmAdapter,
   LlmError,
 } from '@deepseek-ai/dsh-llm'
+import type LlmRuntime from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock,
   GenerateOptions,
   LlmModelInfo,
   LlmResolvedModelInfo,
-  LlmService,
-  Message,
+  PreparedAdapterCall,
   ResolvedRetryPolicy,
   StreamChunk,
   TextBlock,
-  ToolResultBlock,
 } from '@deepseek-ai/dsh-llm'
 import type { ResolvedConfig, ResolvedConfigSource, ResolvedTarget } from './config.js'
 import { LunaVision } from './vision.js'
@@ -22,13 +21,13 @@ import type { VisionCommand } from './vision.js'
 
 /** Adapter dependencies, with the Luna process replaceable for tests. */
 export interface LunaVisionBridgeDeps {
-  llm: LlmService
+  llm: Pick<LlmRuntime, 'providerRetryPolicy' | 'resolveModelInfo' | 'stream'>
   attachments: AttachmentStore
   config: ResolvedConfigSource
   runVisionCommand?: VisionCommand
 }
 
-function sameMessageText(message: Message, config: ResolvedConfig): string {
+function sameMessageText(message: GenerateOptions['messages'][number], config: ResolvedConfig): string {
   if (!config.includeUserText || message.role !== 'user' || config.maxUserTextChars === 0) return ''
   return message.content
     .filter((block): block is TextBlock => block.type === 'text')
@@ -98,16 +97,40 @@ function bridgeModelInfo(config: ResolvedConfig, target: ResolvedTarget, downstr
 
 /** Provider adapter that replaces durable image blocks with Luna descriptions. */
 export class LunaVisionBridgeAdapter extends LlmAdapter {
-  private readonly vision: LunaVision
+  private readonly visions = new Map<string, LunaVision>()
+  private generation?: { fingerprint: string; config: ResolvedConfig }
 
   /** @param deps - shared LLM registry, attachments, configuration source, and optional Luna runner. */
   constructor(private readonly deps: LunaVisionBridgeDeps) {
     super()
-    this.vision = new LunaVision({
-      attachments: deps.attachments,
-      config: deps.config,
-      ...(deps.runVisionCommand === undefined ? {} : { runCommand: deps.runVisionCommand }),
-    })
+  }
+
+  private captureConfig(): ResolvedConfig {
+    const current = this.deps.config()
+    const fingerprint = JSON.stringify(current)
+    if (this.generation?.fingerprint !== fingerprint) {
+      this.generation = { fingerprint, config: structuredClone(current) }
+    }
+    return this.generation.config
+  }
+
+  private visionFor(config: ResolvedConfig): LunaVision {
+    // Display names and downstream routing do not invalidate cached/in-flight image work.
+    // Only facts read by the transcription runner select a separate generation.
+    const key = JSON.stringify([config.lunaCommand, config.codexCommand, config.lunaModel,
+      config.timeoutMs, config.maxOutputBytes, config.cacheDescriptions, config.cacheDir, config.cacheNamespace])
+    let vision = this.visions.get(key)
+    if (vision === undefined) {
+      vision = new LunaVision({
+        attachments: this.deps.attachments,
+        config: () => config,
+        ...(this.deps.runVisionCommand === undefined ? {} : { runCommand: this.deps.runVisionCommand }),
+      })
+      this.visions.set(key, vision)
+      // Bound retired runner generations; prepared calls retain their own config snapshots.
+      if (this.visions.size > 4) this.visions.delete(this.visions.keys().next().value!)
+    }
+    return vision
   }
 
   override providerInfo(provider: string): { id: string; name: string } {
@@ -147,8 +170,25 @@ export class LunaVisionBridgeAdapter extends LlmAdapter {
     return bridgeModelInfo(config, target, downstream)
   }
 
-  override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    const config = this.deps.config()
+  override async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    // One detached generation owns both model metadata and image/transcription/dispatch facts.
+    const config = this.captureConfig()
+    const target = targetByBridgeModel(config, model)
+    if (provider !== config.bridgeProvider || target === undefined) {
+      throw new LlmError(`unknown Luna bridge model "${provider}/${model}"`, 'LUNA_VISION_MODEL_NOT_FOUND')
+    }
+    const downstream = await this.deps.llm.resolveModelInfo(target.provider, target.model, signal)
+    return {
+      model: bridgeModelInfo(config, target, downstream),
+      stream: options => this.streamWithConfig(options, config),
+    }
+  }
+
+  override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    return this.streamWithConfig(options, this.captureConfig())
+  }
+
+  private async * streamWithConfig(options: GenerateOptions, config: ResolvedConfig): AsyncIterable<StreamChunk> {
     if (options.provider !== config.bridgeProvider) {
       throw new LlmError(`Luna bridge received provider "${options.provider}"`, 'LUNA_VISION_WRONG_PROVIDER')
     }
@@ -156,13 +196,13 @@ export class LunaVisionBridgeAdapter extends LlmAdapter {
     if (target === undefined) {
       throw new LlmError(`Luna bridge received model "${options.model}"`, 'LUNA_VISION_MODEL_NOT_FOUND')
     }
-    const messages: Message[] = []
+    const messages: GenerateOptions['messages'] = []
     for (const message of options.messages) {
       const context = sameMessageText(message, config)
       messages.push({
         ...message,
         content: await this.transformContent(message.content, context, config, options.signal),
-      })
+      } as GenerateOptions['messages'][number])
     }
     yield* this.deps.llm.stream({
       ...options,
@@ -181,7 +221,7 @@ export class LunaVisionBridgeAdapter extends LlmAdapter {
     const transformed: ContentBlock[] = []
     for (const block of content) {
       if (block.type === 'image') {
-        const description = await this.vision.describe(
+        const description = await this.visionFor(config).describe(
           block.attachment,
           lunaPrompt(config, context),
           signal,
@@ -192,11 +232,14 @@ export class LunaVisionBridgeAdapter extends LlmAdapter {
         })
         continue
       }
-      if (block.type === 'tool-result') {
-        const nested: ToolResultBlock = {
+      // Older DSH versions nested results inside content blocks; 0.2.1
+      // carries them as tool-role messages, transformed by the outer loop.
+      const legacy = block as unknown as { type: string; content?: ContentBlock[] }
+      if (legacy.type === 'tool-result' && Array.isArray(legacy.content)) {
+        const nested = {
           ...block,
-          content: await this.transformContent(block.content, context, config, signal),
-        }
+          content: await this.transformContent(legacy.content, context, config, signal),
+        } as unknown as ContentBlock
         transformed.push(nested)
         continue
       }

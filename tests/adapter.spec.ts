@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import type { GenerateOptions, LlmService, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { LunaVisionBridgeDeps } from '../src/adapter.js'
 import { describe, expect, it, vi } from 'vitest'
 import { LunaVisionBridgeAdapter, visionBoundary } from '../src/adapter.js'
 import { resolveConfig } from '../src/config.js'
@@ -35,7 +36,7 @@ const RETRY_POLICY = {
   jitter: 0,
 } as const
 
-function scriptedLlm(onStream?: (options: GenerateOptions) => void): LlmService {
+function scriptedLlm(onStream?: (options: GenerateOptions) => void): LunaVisionBridgeDeps['llm'] {
   return {
     providerRetryPolicy: vi.fn().mockReturnValue({ ...RETRY_POLICY }),
     resolveModelInfo: vi.fn().mockImplementation(async (provider: string, model: string) => ({
@@ -51,7 +52,7 @@ function scriptedLlm(onStream?: (options: GenerateOptions) => void): LlmService 
         yield { type: 'finish', reason: { kind: 'stop' } } satisfies StreamChunk
       })()
     },
-  } as unknown as LlmService
+  } as unknown as LunaVisionBridgeDeps['llm']
 }
 
 function configSource(config: Parameters<typeof resolveConfig>[0] = {}): () => ResolvedConfig {
@@ -66,6 +67,81 @@ async function collect(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[
 }
 
 describe('LunaVisionBridgeAdapter', () => {
+  it('retains image cache across display-name and downstream-target edits', async () => {
+    let current = resolveConfig({ cacheDescriptions: false, targets: [{ provider: 'a', model: 'a', bridgeModel: 'bridge' }] })
+    const runVision = vi.fn().mockResolvedValue('image content')
+    const adapter = new LunaVisionBridgeAdapter({ llm: scriptedLlm(), attachments: attachments(), config: () => current, runVisionCommand: runVision })
+    const options: GenerateOptions = { provider: 'luna-vision-bridge', model: 'bridge', messages: [{ role: 'user', content: [{ type: 'image', attachment: IMAGE }] }] }
+    await collect(adapter.stream(options))
+    await collect(adapter.stream(options))
+    current = resolveConfig({ cacheDescriptions: false, providerName: 'Renamed', targets: [{ provider: 'b', model: 'b', bridgeModel: 'bridge' }] })
+    await collect(adapter.stream(options))
+    expect(runVision).toHaveBeenCalledOnce()
+  })
+
+  it('coalesces in-flight image work across routing edits while preserving each prepared target', async () => {
+    let current = resolveConfig({ cacheDescriptions: false, targets: [{ provider: 'a', model: 'a', bridgeModel: 'bridge' }] })
+    let started!: () => void
+    const running = new Promise<void>(resolve => { started = resolve })
+    let finish!: (value: string) => void
+    const result = new Promise<string>(resolve => { finish = resolve })
+    const delegated: GenerateOptions[] = []
+    const runVision = vi.fn(() => { started(); return result })
+    const adapter = new LunaVisionBridgeAdapter({ llm: scriptedLlm(options => { delegated.push(options) }), attachments: attachments(), config: () => current, runVisionCommand: runVision })
+    const options: GenerateOptions = { provider: 'luna-vision-bridge', model: 'bridge', messages: [{ role: 'user', content: [{ type: 'image', attachment: IMAGE }] }] }
+    const first = await adapter.prepareCall(options.provider, options.model)
+    const firstRun = collect(first.stream(options))
+    await running
+    current = resolveConfig({ cacheDescriptions: false, providerName: 'Renamed', targets: [{ provider: 'b', model: 'b', bridgeModel: 'bridge' }] })
+    const second = await adapter.prepareCall(options.provider, options.model)
+    const secondRun = collect(second.stream(options))
+    finish('image content')
+    await Promise.all([firstRun, secondRun])
+    expect(runVision).toHaveBeenCalledOnce()
+    expect(delegated.map(call => call.provider)).toEqual(['a', 'b'])
+  })
+
+  it.each([false, true])('binds prepared metadata, vision and target across settings changes (rename=%s)', async (rename) => {
+    let current = resolveConfig({ cacheDescriptions: false, lunaModel: 'vision-a', targets: [
+      { provider: 'target-a', model: 'model-a', bridgeModel: 'bridge' },
+    ] })
+    let delegated: GenerateOptions | undefined
+    const runVision = vi.fn().mockResolvedValue('image content')
+    const adapter = new LunaVisionBridgeAdapter({ llm: scriptedLlm(options => { delegated = options }),
+      attachments: attachments(), config: () => current, runVisionCommand: runVision })
+    const prepared = await adapter.prepareCall('luna-vision-bridge', 'bridge')
+    current = resolveConfig({ cacheDescriptions: false, lunaModel: 'vision-b',
+      ...(rename ? { bridgeProvider: 'renamed' } : {}),
+      targets: [{ provider: 'target-b', model: 'model-b', bridgeModel: 'bridge' }] })
+    await collect(prepared.stream({ provider: 'luna-vision-bridge', model: 'bridge', messages: [
+      { role: 'user', content: [{ type: 'image', attachment: IMAGE }] },
+    ] }))
+    expect(prepared.model.description).toContain('target-a/model-a')
+    expect(delegated).toMatchObject({ provider: 'target-a', model: 'model-a' })
+    expect(runVision.mock.calls[0]?.[3]).toMatchObject({ model: 'vision-a' })
+  })
+
+  it.each(['user', 'tool'] as const)('transcribes images in new %s request messages without rewriting their identity', async (role) => {
+    let delegated: GenerateOptions | undefined
+    const runVision = vi.fn().mockResolvedValue('a browser screenshot')
+    const adapter = new LunaVisionBridgeAdapter({
+      llm: scriptedLlm(options => { delegated = options }),
+      attachments: attachments(),
+      config: configSource(),
+      runVisionCommand: runVision,
+    })
+    const message = {
+      role,
+      ...(role === 'tool' ? { id: 'tool-result-1', source: { kind: 'tool', callId: 'call-1' } } : {}),
+      content: [{ type: 'image', attachment: IMAGE }],
+    } as GenerateOptions['messages'][number]
+    await collect(adapter.stream({ provider: 'luna-vision-bridge', model: 'deepseek-v4-flash', messages: [message] }))
+    expect(runVision).toHaveBeenCalledOnce()
+    expect(delegated?.messages[0]).toMatchObject({ role, content: [{ type: 'text', text: expect.stringContaining('a browser screenshot') }] })
+    if (role === 'user') expect(delegated?.messages[0]).not.toHaveProperty('id')
+    else expect(delegated?.messages[0]).toMatchObject({ id: 'tool-result-1', source: message.source })
+  })
+
   it('advertises one image-capable bridge model per target while retaining target metadata', async () => {
     const adapter = new LunaVisionBridgeAdapter({
       llm: scriptedLlm(),

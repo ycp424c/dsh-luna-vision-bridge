@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import z from 'schemastery'
+import z from '@deepseek-ai/schemastery'
 
 const DEFAULT_LUNA_COMMAND = fileURLToPath(new URL('../scripts/read-image-luna.sh', import.meta.url))
 
@@ -100,7 +100,7 @@ const targetSchema: z<TargetConfig> = z.object({
 })
 
 /** Loader-facing configuration schema, doubling as the `luna-vision-bridge` settings-section shape. */
-export const Config: z<Config> = z.object({
+const ConfigFields: z<Config> = z.object({
   bridgeProvider: z.string(),
   providerName: z.string().default('Luna Vision Bridge'),
   targets: z.array(targetSchema),
@@ -120,6 +120,9 @@ export const Config: z<Config> = z.object({
   includeUserText: z.boolean(),
   maxUserTextChars: z.natural(),
 })
+
+/** The public settings form edits this stable live-config reference. */
+export const Config = ConfigFields.volatile()
 
 function nonEmpty(value: string, field: string): string {
   const resolved = value.trim()
